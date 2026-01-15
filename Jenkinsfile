@@ -6,24 +6,27 @@ pipeline {
     }
 
     stages {
-        stage('Prepare Environment') {
-            steps {
-                sh '''
-                    python3 -m venv venv
-                    . venv/bin/activate
-                    pip install --upgrade pip
-                    pip install -r requirements.txt
-                '''
+        stage('Preparación en Paralelo') {
+            parallel {
+                stage('Instalar Dependencias') {
+                    steps {
+                        sh '''
+                            python3 -m venv venv
+                            ./venv/bin/pip install --upgrade pip
+                            ./venv/bin/pip install -r requirements.txt
+                        '''
+                    }
+                }
+                stage('Levantar Wiremock') {
+                    steps {
+                        sh 'docker start wiremock || true'
+                        sleep 3
+                    }
+                }
             }
         }
 
-        stage('Wiremock') {
-            steps {
-                sh 'docker start wiremock || true'
-            }
-        }
-
-        stage('Run API and Test') {
+        stage('Test') {
             steps {
                 sh '''
                     . venv/bin/activate
@@ -34,7 +37,7 @@ pipeline {
             }
         }
 
-        stage('Results'){
+        stage('Resultados'){
             steps {
                 junit 'result*.xml'
             }
