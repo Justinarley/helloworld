@@ -29,7 +29,7 @@ pipeline {
                     . venv/bin/activate
                     fuser -k 5000/tcp || true
                     flask run --host=0.0.0.0 --port=5000 &
-                    pytest test/rest
+                    pytest test/rest --junitxml=results.xml
                 '''
             }
         }
