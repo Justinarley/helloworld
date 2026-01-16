@@ -4,7 +4,7 @@ pipeline {
 
     environment {
         FLASK_APP = "app/api.py"
-        JMETER_BIN = "/home/justin/apache-jmeter-5.6.3/bin/jmeter.sh"
+        JMETER_BIN = "/opt/jmeter/bin/jmeter.sh"
         JMX_FILE = "test/jmeter/flask.jmx"
     }
 
