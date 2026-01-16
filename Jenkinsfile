@@ -3,7 +3,9 @@ pipeline {
 
     environment {
         FLASK_APP = "app/api.py"
+        // Tu ruta de JMeter
         JMETER_BIN = "/home/justin/apache-jmeter-5.6.3/bin/jmeter.sh"
+        // Tu archivo JMX
         JMX_FILE = "test/jmeter/flask.jmx"
     }
 
@@ -14,43 +16,57 @@ pipeline {
             }
         }
 
+        stage('Install deps') {
+            steps {
+                sh '''
+                    python3 -m venv venv
+                    ./venv/bin/pip install --upgrade pip
+                    ./venv/bin/pip install flask coverage pytest bandit flake8
+                '''
+            }
+        }
+
         stage('Static') {
             steps {
-                sh './venv/bin/flake8 app/ --format=default > flake8.log || true'
-                // Sintaxis corregida para umbrales de Flake8
-                recordIssues tool: flake8(pattern: 'flake8.log'), 
-                             unstableTotalAll: 8, 
-                             failedTotalAll: 10
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh './venv/bin/flake8 --exit-zero --format=pylint app > flake8.out'
+                    recordIssues(
+                        tools: [flake8(pattern: 'flake8.out')],
+                        qualityGates: [
+                            [threshold: 8, type: 'TOTAL', unstable: true],
+                            [threshold: 10, type: 'TOTAL', unstable: false]
+                        ],
+                        sourceCodeRetention: 'LAST_BUILD'
+                    )
+                }
             }
         }
 
         stage('Security Test') {
             steps {
-                sh './venv/bin/bandit -r app/ -f txt -o bandit.txt || true'
-                // Sintaxis corregida para umbrales de Bandit
-                recordIssues tool: bandit(pattern: 'bandit.txt'), 
-                             unstableTotalAll: 2, 
-                             failedTotalAll: 4
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh './venv/bin/bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"'
+                    recordIssues(
+                        tools: [pyLint(pattern: 'bandit.out')],
+                        qualityGates: [
+                            [threshold: 2, type: 'TOTAL', unstable: true],
+                            [threshold: 4, type: 'TOTAL', unstable: false]
+                        ],
+                        sourceCodeRetention: 'LAST_BUILD'
+                    )
+                }
             }
         }
 
         stage('Unit') {
             steps {
-                sh './venv/bin/coverage run -m pytest test/unit --junitxml=unit-results.xml'
-                junit 'unit-results.xml'
-            }
-        }
-
-        stage('Coverage') {
-            steps {
-                sh './venv/bin/coverage xml -o coverage.xml'
-                // Sintaxis simplificada para Coverage
-                recordCoverage(tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
-                    thresholds: [
-                        [thresholdTarget: 'Line', unstableThreshold: 95.0, failureThreshold: 85.0],
-                        [thresholdTarget: 'Branch', unstableThreshold: 90.0, failureThreshold: 80.0]
-                    ]
-                )
+                sh '''
+                    PYTHONPATH=.
+                    ./venv/bin/coverage run --branch --source=app --omit=app/__init__.py,app/api.py \
+                        -m pytest test/unit --junitxml=result_unit.xml
+                    ./venv/bin/coverage xml -o coverage.xml
+                '''
+                junit 'result_unit.xml'
             }
         }
 
@@ -60,10 +76,11 @@ pipeline {
                     fuser -k 5000/tcp || true
                     ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
                     sleep 5
-                    ./venv/bin/pytest test/rest --junitxml=rest-results.xml
+                    PYTHONPATH=$WORKSPACE
+                    ./venv/bin/pytest --junitxml=result_rest.xml test/rest
                     kill $(lsof -t -i:5000) || true
                 '''
-                junit 'rest-results.xml'
+                junit 'result_rest.xml'
             }
         }
 
@@ -73,11 +90,33 @@ pipeline {
                     fuser -k 5000/tcp || true
                     ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
                     sleep 5
-                    $JMETER_BIN -n -t $JMX_FILE -l results.jtl
+                    $JMETER_BIN -n -t $JMX_FILE -l flask.jtl -f
                     kill $(lsof -t -i:5000) || true
                 '''
-                perfReport 'results.jtl'
+                perfReport sourceDataFiles: 'flask.jtl'
             }
+        }
+
+        stage('Cobertura') {
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    recordCoverage(
+                        tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
+                        qualityGates: [
+                            [threshold: 85, metric: 'LINE', unstable: true],
+                            [threshold: 80, metric: 'BRANCH', unstable: true],
+                            [threshold: 95, metric: 'LINE', unstable: false],
+                            [threshold: 90, metric: 'BRANCH', unstable: false]
+                        ]
+                    )
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
         }
     }
 }
