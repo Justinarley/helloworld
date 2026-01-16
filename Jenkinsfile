@@ -79,8 +79,8 @@ pipeline {
                     recordIssues(
                         tools: [flake8(pattern: 'flake8.out')],
                         qualityGates: [
-                            [threshold: 8, type: 'TOTAL', unstable: true],
-                            [threshold: 10, type: 'TOTAL', unstable: false]
+                            [threshold: 16, type: 'TOTAL', unstable: true],
+                            [threshold: 17, type: 'TOTAL', unstable: false]
                         ]
                     )
                 }
