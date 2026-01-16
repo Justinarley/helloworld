@@ -16,13 +16,27 @@ pipeline {
             }
         }
 
-        stage('Install deps') {
-            steps {
-                sh '''
-                    python3 -m venv venv
-                    ./venv/bin/pip install --upgrade pip
-                    ./venv/bin/pip install flask pytest coverage flake8 bandit
-                '''
+    stage('Preparación en Paralelo') {
+            parallel {
+                stage('Instalar Dependencias') {
+                    steps {
+                        sh '''
+                            python3 -m venv venv
+                            ./venv/bin/pip install --upgrade pip
+                            if [ -f requirements.txt ]; then
+                                ./venv/bin/pip install -r requirements.txt
+                            else
+                                ./venv/bin/pip install flask pytest coverage flake8 bandit
+                            fi
+                        '''
+                    }
+                }
+                stage('Levantar Wiremock') {
+                    steps {
+                        sh 'docker start wiremock || true'
+                        sleep 3
+                    }
+                }
             }
         }
 
