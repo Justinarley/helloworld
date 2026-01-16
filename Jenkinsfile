@@ -94,7 +94,7 @@ pipeline {
                         ./venv/bin/bandit -r app --exit-zero -f json -o bandit.json
                     '''
                     recordIssues(
-                        tools: [bandit(pattern: 'bandit.json')],
+                        tools: [pyLint(pattern: 'bandit.json')],
                         qualityGates: [
                             [threshold: 2, type: 'TOTAL', unstable: true],
                             [threshold: 4, type: 'TOTAL', unstable: false]
@@ -110,13 +110,10 @@ pipeline {
                     recordCoverage(
                         tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
                         qualityGates: [
-                            // Líneas
-                            [metric: 'LINE', threshold: 95.0, unstable: true],
-                            [metric: 'LINE', threshold: 85.0, unstable: false],
-
-                            // Ramas
-                            [metric: 'BRANCH', threshold: 90.0, unstable: true],
-                            [metric: 'BRANCH', threshold: 80.0, unstable: false]
+                            [threshold: 85, metric: 'LINE', unstable: true],
+                            [threshold: 80, metric: 'BRANCH', unstable: true],
+                            [threshold: 95, metric: 'LINE', unstable: false],
+                            [threshold: 90, metric: 'BRANCH', unstable: false]
                         ]
                     )
                 }
@@ -139,6 +136,7 @@ pipeline {
 
     post {
         always {
+            sh 'docker stop wiremock || true'
             cleanWs()
         }
     }
