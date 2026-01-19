@@ -22,7 +22,6 @@ class Calculator:
         self.check_types(x, y)
         if y == 0:
             raise TypeError("Division by zero is not possible")
-
         return x / y
 
     def power(self, x, y):
@@ -38,3 +37,4 @@ if __name__ == "__main__":  # pragma: no cover
     calc = Calculator()
     result = calc.add(2, 2)
     print(result)
+
