@@ -1,5 +1,5 @@
 pipeline {
-    agent none // No usamos un agente global, lo definimos por etapa
+    agent none 
 
     environment {
         FLASK_APP = "app/api.py"
@@ -8,39 +8,30 @@ pipeline {
     }
 
     stages {
-        stage('Get Code & Setup') {
+        stage('Get Code & Stash') {
             agent { label 'agente-build' }
             steps {
-                // Comandos de diagnóstico obligatorios
                 sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
-                
                 checkout scm
-                sh '''
-                    python3 -m venv venv
-                    ./venv/bin/pip install --upgrade pip
-                    ./venv/bin/pip install flask pytest coverage flake8 bandit
-                '''
-                // Guardamos el código y el venv para pasárselo al otro agente
-                stash name: 'proyecto-completo', includes: '**/*', useDefaultExcludes: false
+                // Stash solo del código fuente, excluyendo carpetas pesadas o problemáticas
+                stash name: 'codigo-fuente', includes: '**/*', excludes: 'venv/**, .pytest_cache/**'
             }
         }
 
-        stage('Pruebas en Paralelo Distribuidas') {
+        stage('Pruebas en Paralelo') {
             parallel {
                 stage('Unit Tests') {
                     agent { label 'agente-test' }
                     steps {
-                        unstash 'proyecto-completo'
+                        unstash 'codigo-fuente'
                         sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
                         sh '''
-                            PYTHONPATH=.
-                            ./venv/bin/coverage run --branch --source=app \
-                                --omit=app/__init__.py,app/api.py \
-                                -m pytest test/unit --junitxml=result_unit.xml
+                            python3 -m venv venv
+                            ./venv/bin/pip install flask pytest coverage
+                            PYTHONPATH=. ./venv/bin/coverage run -m pytest test/unit --junitxml=result_unit.xml
                             ./venv/bin/coverage xml -o coverage.xml
                         '''
                         junit 'result_unit.xml'
-                        // Guardamos el reporte de cobertura para la etapa final
                         stash name: 'reporte-cobertura', includes: 'coverage.xml'
                     }
                 }
@@ -48,16 +39,17 @@ pipeline {
                 stage('Rest & Performance') {
                     agent { label 'agente-test' }
                     steps {
-                        unstash 'proyecto-completo'
+                        unstash 'codigo-fuente'
                         sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
                         sh 'docker start wiremock || true'
                         catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                             sh '''
+                                python3 -m venv venv
+                                ./venv/bin/pip install flask pytest
                                 fuser -k 5000/tcp || true
                                 ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
                                 sleep 5
-                                PYTHONPATH=.
-                                ./venv/bin/pytest test/rest --junitxml=result_rest.xml
+                                PYTHONPATH=. ./venv/bin/pytest test/rest --junitxml=result_rest.xml
                                 $JMETER_BIN -n -t $JMX_FILE -l flask.jtl -f
                                 fuser -k 5000/tcp || true
                             '''
@@ -70,10 +62,12 @@ pipeline {
                 stage('Static & Security') {
                     agent { label 'agente-test' }
                     steps {
-                        unstash 'proyecto-completo'
+                        unstash 'codigo-fuente'
                         sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
                         catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                             sh '''
+                                python3 -m venv venv
+                                ./venv/bin/pip install flake8 bandit
                                 ./venv/bin/flake8 app --exit-zero --format=pylint > flake8.out
                                 ./venv/bin/bandit --exit-zero -r app -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
                             '''
@@ -85,7 +79,7 @@ pipeline {
             }
         }
 
-        stage('Resultados Finales') {
+        stage('Final Analysis') {
             agent { label 'agente-build' }
             steps {
                 unstash 'reporte-cobertura'
@@ -97,7 +91,6 @@ pipeline {
 
     post {
         always {
-            // Limpieza obligatoria del espacio de trabajo en ambos nodos
             node('agente-build') { cleanWs() }
             node('agente-test') { 
                 sh 'docker stop wiremock || true'
