@@ -104,6 +104,19 @@ pipeline {
             }
         }
 
+        stage('Performance') {
+            steps {
+                sh '''
+                    fuser -k 5000/tcp || true
+                    ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
+                    sleep 5
+                    $JMETER_BIN -n -t $JMX_FILE -l flask.jtl -f
+                    kill $(lsof -t -i:5000) || true
+                '''
+                perfReport sourceDataFiles: 'flask.jtl'
+            }
+        }
+        
         stage('Coverage') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
@@ -117,19 +130,6 @@ pipeline {
                         ]
                     )
                 }
-            }
-        }
-
-        stage('Performance') {
-            steps {
-                sh '''
-                    fuser -k 5000/tcp || true
-                    ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
-                    sleep 5
-                    $JMETER_BIN -n -t $JMX_FILE -l flask.jtl -f
-                    kill $(lsof -t -i:5000) || true
-                '''
-                perfReport sourceDataFiles: 'flask.jtl'
             }
         }
     }
