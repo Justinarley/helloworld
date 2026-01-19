@@ -87,7 +87,7 @@ pipeline {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '''
-                        ./venv/bin/bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                        ./venv/bin/bandit -r app --exit-zero -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
                     '''
                     recordIssues(
                         tools: [pyLint(pattern: 'bandit.out')],
