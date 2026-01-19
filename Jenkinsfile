@@ -49,7 +49,6 @@ pipeline {
 
         stage('Rest') {
             steps {
-                // El reto dice: siempre en verde (SUCCESS / SUCCESS)
                 catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
                     sh '''
                         fuser -k 5000/tcp || true
@@ -66,7 +65,6 @@ pipeline {
 
         stage('Static') {
             steps {
-                // Ajustado a: 8 (Unstable) y 10 (Failure)
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh './venv/bin/flake8 app --exit-zero --format=pylint > flake8.out'
                     recordIssues(
@@ -82,7 +80,6 @@ pipeline {
 
         stage('Security Test') {
             steps {
-                // Ajustado a: 2 (Unstable) y 4 (Failure)
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh './venv/bin/bandit -r app --exit-zero -f json -o bandit.json'
                     recordIssues(
@@ -98,7 +95,6 @@ pipeline {
 
         stage('Coverage') {
             steps {
-                // Ajustado a: Líneas 85-95 y Ramas 80-90
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     recordCoverage(
                         tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
