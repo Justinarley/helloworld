@@ -88,6 +88,7 @@ pipeline {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '''
                         ./venv/bin/bandit -r app --exit-zero -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                        cat bandit.out
                     '''
                     recordIssues(
                         tools: [pyLint(pattern: 'bandit.out')],
