@@ -14,15 +14,23 @@ pipeline {
             }
         }
 
-        stage('Preparación') {
-            steps {
-                sh '''
-                    python3 -m venv venv
-                    ./venv/bin/pip install --upgrade pip
-                    ./venv/bin/pip install flask pytest coverage flake8 bandit
-                    if [ -f requirements.txt ]; then ./venv/bin/pip install -r requirements.txt; fi
-                '''
-                sh 'docker start wiremock || true'
+        stage('Preparación en Paralelo') {
+            parallel {
+                stage('Instalar Dependencias') {
+                    steps {
+                        sh '''
+                            python3 -m venv venv
+                            ./venv/bin/pip install --upgrade pip
+                            ./venv/bin/pip install flask pytest coverage flake8 bandit
+                            if [ -f requirements.txt ]; then ./venv/bin/pip install -r requirements.txt; fi
+                        '''
+                    }
+                }
+                stage('Levantar Wiremock') {
+                    steps {
+                        sh 'docker start wiremock || true'
+                    }
+                }
             }
         }
 
@@ -41,7 +49,7 @@ pipeline {
 
         stage('Rest') {
             steps {
-                // El reto pide que Rest siempre termine en verde (SUCCESS)
+                // El reto dice: siempre en verde (SUCCESS / SUCCESS)
                 catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
                     sh '''
                         fuser -k 5000/tcp || true
@@ -58,6 +66,7 @@ pipeline {
 
         stage('Static') {
             steps {
+                // Ajustado a: 8 (Unstable) y 10 (Failure)
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh './venv/bin/flake8 app --exit-zero --format=pylint > flake8.out'
                     recordIssues(
@@ -73,12 +82,11 @@ pipeline {
 
         stage('Security Test') {
             steps {
-                // catchError con buildResult: 'SUCCESS' permite que el pipeline siga aunque Bandit falle
+                // Ajustado a: 2 (Unstable) y 4 (Failure)
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh './venv/bin/bandit -r app --exit-zero -f json -o bandit.json'
                     recordIssues(
                         tools: [pyLint(pattern: 'bandit.json')],
-                        ignoreFailedBuilds: false, // OBLIGATORIO para que se ejecute tras Flake8
                         qualityGates: [
                             [threshold: 2, type: 'TOTAL', criticality: 'UNSTABLE'],
                             [threshold: 4, type: 'TOTAL', criticality: 'FAILURE']
@@ -90,10 +98,10 @@ pipeline {
 
         stage('Coverage') {
             steps {
+                // Ajustado a: Líneas 85-95 y Ramas 80-90
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     recordCoverage(
                         tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
-                        ignoreFailedBuilds: false, // OBLIGATORIO para que se ejecute tras los anteriores
                         qualityGates: [
                             [threshold: 95.0, metric: 'LINE', baseline: 'PROJECT', criticality: 'UNSTABLE'],
                             [threshold: 85.0, metric: 'LINE', baseline: 'PROJECT', criticality: 'FAILURE'],
