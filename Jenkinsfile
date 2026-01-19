@@ -8,35 +8,46 @@ pipeline {
     }
 
     stages {
+
         stage('Get Code') {
             steps {
                 checkout scm
             }
         }
 
-        stage('Preparación') {
-            steps {
-                sh '''
-                    python3 -m venv venv
-                    ./venv/bin/pip install --upgrade pip
-                    if [ -f requirements.txt ]; then
-                        ./venv/bin/pip install -r requirements.txt
-                    else
-                        ./venv/bin/pip install flask pytest coverage flake8 bandit
-                    fi
-                '''
-                sh 'docker start wiremock || true'
+        stage('Preparación en Paralelo') {
+            parallel {
+                stage('Instalar Dependencias') {
+                    steps {
+                        sh '''
+                            python3 -m venv venv
+                            ./venv/bin/pip install --upgrade pip
+                            if [ -f requirements.txt ]; then
+                                ./venv/bin/pip install -r requirements.txt
+                            else
+                                ./venv/bin/pip install flask pytest coverage flake8 bandit
+                            fi
+                        '''
+                    }
+                }
+
+                stage('Levantar Wiremock') {
+                    steps {
+                        sh 'docker start wiremock || true'
+                        sleep 3
+                    }
+                }
             }
         }
 
         stage('Unit') {
             steps {
-                // Ejecutamos los tests y generamos el XML de cobertura en este único punto
                 sh '''
                     PYTHONPATH=.
                     ./venv/bin/coverage run --branch --source=app \
                         --omit=app/__init__.py,app/api.py \
                         -m pytest test/unit --junitxml=result_unit.xml
+
                     ./venv/bin/coverage xml -o coverage.xml
                 '''
                 junit 'result_unit.xml'
@@ -45,12 +56,13 @@ pipeline {
 
         stage('Rest') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '''
                         fuser -k 5000/tcp || true
                         ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
                         sleep 5
-                        PYTHONPATH=. ./venv/bin/pytest test/rest --junitxml=result_rest.xml
+                        PYTHONPATH=.
+                        ./venv/bin/pytest test/rest --junitxml=result_rest.xml
                         kill $(lsof -t -i:5000) || true
                     '''
                     junit 'result_rest.xml'
@@ -61,12 +73,14 @@ pipeline {
         stage('Static') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh './venv/bin/flake8 app --exit-zero --format=pylint > flake8.out'
+                    sh '''
+                        ./venv/bin/flake8 app --exit-zero --format=pylint > flake8.out
+                    '''
                     recordIssues(
                         tools: [flake8(pattern: 'flake8.out')],
                         qualityGates: [
-                            [threshold: 8, type: 'TOTAL', unstable: true],  // Unstable si >= 8
-                            [threshold: 10, type: 'TOTAL', unstable: false] // Failure si >= 10
+                            [criticality: 'NOTE',  integerThreshold: 8,  threshold: 8.0,  type: 'TOTAL'],
+                            [criticality: 'ERROR', integerThreshold: 10, threshold: 10.0, type: 'TOTAL']
                         ]
                     )
                 }
@@ -76,13 +90,14 @@ pipeline {
         stage('Security Test') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh './venv/bin/bandit -r app --exit-zero -f json -o bandit.json'
-                    // Mantenemos pyLint para bandit.json como pediste para evitar errores de parseo
+                    sh '''
+                        ./venv/bin/bandit -r app --exit-zero -f json -o bandit.json
+                    '''
                     recordIssues(
                         tools: [pyLint(pattern: 'bandit.json')],
                         qualityGates: [
-                            [threshold: 2, type: 'TOTAL', unstable: true],  // Unstable si >= 2
-                            [threshold: 4, type: 'TOTAL', unstable: false] // Failure si >= 4
+                            [criticality: 'NOTE',    integerThreshold: 2, threshold: 2.0, type: 'TOTAL'],
+                            [criticality: 'FAILURE', integerThreshold: 4, threshold: 4.0, type: 'TOTAL']
                         ]
                     )
                 }
@@ -95,12 +110,10 @@ pipeline {
                     recordCoverage(
                         tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
                         qualityGates: [
-                            // Líneas: Unstable entre 85-95. Debajo de 85 Failure.
-                            [threshold: 95.0, metric: 'LINE', baseline: 'PROJECT', criticality: 'UNSTABLE'],
-                            [threshold: 85.0, metric: 'LINE', baseline: 'PROJECT', criticality: 'FAILURE'],
-                            // Ramas: Unstable entre 80-90. Debajo de 80 Failure.
-                            [threshold: 90.0, metric: 'BRANCH', baseline: 'PROJECT', criticality: 'UNSTABLE'],
-                            [threshold: 80.0, metric: 'BRANCH', baseline: 'PROJECT', criticality: 'FAILURE']
+                            [criticality: 'ERROR', integerThreshold: 85, metric: 'LINE',   threshold: 85.0],
+                            [criticality: 'NOTE',  integerThreshold: 95, metric: 'LINE',   threshold: 95.0],
+                            [criticality: 'ERROR', integerThreshold: 80, metric: 'BRANCH', threshold: 80.0],
+                            [criticality: 'NOTE',  integerThreshold: 90, metric: 'BRANCH', threshold: 90.0]
                         ]
                     )
                 }
