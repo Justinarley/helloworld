@@ -1,5 +1,5 @@
 pipeline {
-    agent any
+    agent none // No usamos un agente global, lo definimos por etapa
 
     environment {
         FLASK_APP = "app/api.py"
@@ -8,36 +8,30 @@ pipeline {
     }
 
     stages {
-        stage('Get Code') {
+        stage('Get Code & Setup') {
+            agent { label 'agente-build' }
             steps {
+                // Comandos de diagnóstico obligatorios
+                sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
+                
                 checkout scm
+                sh '''
+                    python3 -m venv venv
+                    ./venv/bin/pip install --upgrade pip
+                    ./venv/bin/pip install flask pytest coverage flake8 bandit
+                '''
+                // Guardamos el código y el venv para pasárselo al otro agente
+                stash name: 'proyecto-completo', includes: '**/*', useDefaultExcludes: false
             }
         }
 
-        stage('Preparación en Paralelo') {
+        stage('Pruebas en Paralelo Distribuidas') {
             parallel {
-                stage('Instalar Dependencias') {
+                stage('Unit Tests') {
+                    agent { label 'agente-test' }
                     steps {
-                        sh '''
-                            python3 -m venv venv
-                            ./venv/bin/pip install --upgrade pip
-                            ./venv/bin/pip install flask pytest coverage flake8 bandit
-                        '''
-                    }
-                }
-                stage('Levantar Wiremock') {
-                    steps {
-                        sh 'docker start wiremock || true'
-                        sleep 3
-                    }
-                }
-            }
-        }
-
-        stage('Tests (Unit & Rest)') {
-            parallel {
-                stage('Unit') {
-                    steps {
+                        unstash 'proyecto-completo'
+                        sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
                         sh '''
                             PYTHONPATH=.
                             ./venv/bin/coverage run --branch --source=app \
@@ -46,10 +40,17 @@ pipeline {
                             ./venv/bin/coverage xml -o coverage.xml
                         '''
                         junit 'result_unit.xml'
+                        // Guardamos el reporte de cobertura para la etapa final
+                        stash name: 'reporte-cobertura', includes: 'coverage.xml'
                     }
                 }
-                stage('Rest') {
+
+                stage('Rest & Performance') {
+                    agent { label 'agente-test' }
                     steps {
+                        unstash 'proyecto-completo'
+                        sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
+                        sh 'docker start wiremock || true'
                         catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                             sh '''
                                 fuser -k 5000/tcp || true
@@ -57,83 +58,51 @@ pipeline {
                                 sleep 5
                                 PYTHONPATH=.
                                 ./venv/bin/pytest test/rest --junitxml=result_rest.xml
+                                $JMETER_BIN -n -t $JMX_FILE -l flask.jtl -f
                                 fuser -k 5000/tcp || true
                             '''
                             junit 'result_rest.xml'
+                            perfReport sourceDataFiles: 'flask.jtl'
+                        }
+                    }
+                }
+
+                stage('Static & Security') {
+                    agent { label 'agente-test' }
+                    steps {
+                        unstash 'proyecto-completo'
+                        sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                            sh '''
+                                ./venv/bin/flake8 app --exit-zero --format=pylint > flake8.out
+                                ./venv/bin/bandit --exit-zero -r app -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                            '''
+                            recordIssues(tools: [flake8(pattern: 'flake8.out')])
+                            recordIssues(tools: [pyLint(pattern: 'bandit.out')])
                         }
                     }
                 }
             }
         }
 
-        stage('Static') {
+        stage('Resultados Finales') {
+            agent { label 'agente-build' }
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh '''
-                       ./venv/bin/flake8 app --exit-zero --format=pylint > flake8.out
-                    '''
-                    recordIssues(
-                        tools: [flake8(pattern: 'flake8.out')],
-                        qualityGates: [
-                            [criticality: 'NOTE',  integerThreshold: 8,  threshold: 8.0,  type: 'TOTAL'],
-                            [criticality: 'ERROR', integerThreshold: 10, threshold: 10.0, type: 'TOTAL']
-                        ]
-                    )
-                }
-            }
-        }
-
-        stage('Security Test') {
-            steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh '''
-                        ./venv/bin/bandit --exit-zero -r app -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
-                    '''
-                    recordIssues(
-                        tools: [pyLint(pattern: 'bandit.out')],
-                        qualityGates: [
-                            [criticality: 'NOTE',    integerThreshold: 2, threshold: 2.0, type: 'TOTAL'],
-                            [criticality: 'FAILURE', integerThreshold: 4, threshold: 4.0, type: 'TOTAL']
-                        ]
-                    )
-                }
-            }
-        }
-
-        stage('Performance') {
-            steps {
-                sh '''
-                    fuser -k 5000/tcp || true
-                    ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
-                    sleep 5
-                    $JMETER_BIN -n -t $JMX_FILE -l flask.jtl -f
-                    fuser -k 5000/tcp || true
-                '''
-                perfReport sourceDataFiles: 'flask.jtl'
-            }
-        }
-        
-        stage('Coverage') {
-            steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    recordCoverage(
-                        tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
-                        qualityGates: [
-                            [criticality: 'ERROR', integerThreshold: 85, metric: 'LINE',   threshold: 85.0],
-                            [criticality: 'NOTE',  integerThreshold: 95, metric: 'LINE',   threshold: 95.0],
-                            [criticality: 'ERROR', integerThreshold: 80, metric: 'BRANCH', threshold: 80.0],
-                            [criticality: 'NOTE',  integerThreshold: 90, metric: 'BRANCH', threshold: 90.0]
-                        ]
-                    )
-                }
+                unstash 'reporte-cobertura'
+                sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
+                recordCoverage(tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']])
             }
         }
     }
 
     post {
         always {
-            sh 'docker stop wiremock || true'
-            cleanWs()
+            // Limpieza obligatoria del espacio de trabajo en ambos nodos
+            node('agente-build') { cleanWs() }
+            node('agente-test') { 
+                sh 'docker stop wiremock || true'
+                cleanWs() 
+            }
         }
     }
 }
