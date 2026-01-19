@@ -1,34 +1,48 @@
 pipeline {
-    agent none 
+    agent none
 
     environment {
         FLASK_APP = "app/api.py"
         JMETER_BIN = "/opt/jmeter/bin/jmeter.sh"
-        JMX_FILE = "test/jmeter/flask.jmx"
+        JMX_FILE  = "test/jmeter/flask.jmx"
     }
 
     stages {
+
         stage('Get Code & Stash') {
             agent { label 'agente-build' }
             steps {
-                sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
                 checkout scm
-                // Stash solo del código fuente, excluyendo carpetas pesadas o problemáticas
                 stash name: 'codigo-fuente', includes: '**/*', excludes: 'venv/**, .pytest_cache/**'
+            }
+        }
+
+        stage('Dependencies') {
+            agent { label 'agente-build' }
+            steps {
+                unstash 'codigo-fuente'
+                sh '''
+                    python3 -m venv venv
+                    ./venv/bin/pip install --upgrade pip
+                    ./venv/bin/pip install -r requirements.txt
+                '''
+                stash name: 'venv', includes: 'venv/**'
             }
         }
 
         stage('Pruebas en Paralelo') {
             parallel {
+
                 stage('Unit Tests') {
                     agent { label 'agente-test' }
                     steps {
                         unstash 'codigo-fuente'
-                        sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
+                        unstash 'venv'
                         sh '''
-                            python3 -m venv venv
-                            ./venv/bin/pip install flask pytest coverage
-                            PYTHONPATH=. ./venv/bin/coverage run --branch --source=app --omit=app/__init__.py,app//api.py -m pytest test/unit --junitxml=result_unit.xml
+                            PYTHONPATH=.
+                            ./venv/bin/coverage run --branch --source=app \
+                              --omit=app/__init__.py,app/api.py \
+                              -m pytest test/unit --junitxml=result_unit.xml
                             ./venv/bin/coverage xml -o coverage.xml
                         '''
                         junit 'result_unit.xml'
@@ -40,16 +54,15 @@ pipeline {
                     agent { label 'agente-test' }
                     steps {
                         unstash 'codigo-fuente'
-                        sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
+                        unstash 'venv'
                         sh 'docker start wiremock || true'
                         catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                             sh '''
-                                python3 -m venv venv
-                                ./venv/bin/pip install flask pytest
                                 fuser -k 5000/tcp || true
                                 ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
                                 sleep 5
-                                PYTHONPATH=. ./venv/bin/pytest test/rest --junitxml=result_rest.xml
+                                PYTHONPATH=.
+                                ./venv/bin/pytest test/rest --junitxml=result_rest.xml
                                 $JMETER_BIN -n -t $JMX_FILE -l flask.jtl -f
                                 fuser -k 5000/tcp || true
                             '''
@@ -63,13 +76,11 @@ pipeline {
                     agent { label 'agente-test' }
                     steps {
                         unstash 'codigo-fuente'
-                        sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
+                        unstash 'venv'
                         catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                             sh '''
-                                python3 -m venv venv
-                                ./venv/bin/pip install flake8 bandit
                                 ./venv/bin/flake8 app --exit-zero --format=pylint > flake8.out
-                                ./venv/bin/bandit --exit-zero -r app -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                                ./venv/bin/bandit --exit-zero -r app -f custom -o bandit.out
                             '''
                             recordIssues(
                                 tools: [flake8(pattern: 'flake8.out')],
@@ -78,7 +89,6 @@ pipeline {
                                     [criticality: 'ERROR', integerThreshold: 10, threshold: 10.0, type: 'TOTAL']
                                 ]
                             )
-
                             recordIssues(
                                 tools: [pyLint(pattern: 'bandit.out')],
                                 qualityGates: [
@@ -96,7 +106,6 @@ pipeline {
             agent { label 'agente-build' }
             steps {
                 unstash 'reporte-cobertura'
-                sh 'whoami; hostname; echo "Workspace: ${WORKSPACE}"'
                 recordCoverage(
                     tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
                     qualityGates: [
@@ -112,10 +121,12 @@ pipeline {
 
     post {
         always {
-            node('agente-build') { cleanWs() }
-            node('agente-test') { 
+            node('agente-test') {
                 sh 'docker stop wiremock || true'
-                cleanWs() 
+                cleanWs()
+            }
+            node('agente-build') {
+                cleanWs()
             }
         }
     }
