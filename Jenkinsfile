@@ -8,7 +8,6 @@ pipeline {
     }
 
     stages {
-
         stage('Get Code') {
             steps {
                 checkout scm
@@ -22,15 +21,10 @@ pipeline {
                         sh '''
                             python3 -m venv venv
                             ./venv/bin/pip install --upgrade pip
-                            if [ -f requirements.txt ]; then
-                                ./venv/bin/pip install -r requirements.txt
-                            else
-                                ./venv/bin/pip install flask pytest coverage flake8 bandit
-                            fi
+                            ./venv/bin/pip install flask pytest coverage flake8 bandit
                         '''
                     }
                 }
-
                 stage('Levantar Wiremock') {
                     steps {
                         sh 'docker start wiremock || true'
@@ -40,32 +34,34 @@ pipeline {
             }
         }
 
-        stage('Unit') {
-            steps {
-                sh '''
-                    PYTHONPATH=.
-                    ./venv/bin/coverage run --branch --source=app \
-                        --omit=app/__init__.py,app/api.py \
-                        -m pytest test/unit --junitxml=result_unit.xml
-
-                    ./venv/bin/coverage xml -o coverage.xml
-                '''
-                junit 'result_unit.xml'
-            }
-        }
-
-        stage('Rest') {
-            steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh '''
-                        fuser -k 5000/tcp || true
-                        ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
-                        sleep 5
-                        PYTHONPATH=.
-                        ./venv/bin/pytest test/rest --junitxml=result_rest.xml
-                        kill $(lsof -t -i:5000) || true
-                    '''
-                    junit 'result_rest.xml'
+        stage('Tests (Unit & Rest)') {
+            parallel {
+                stage('Unit') {
+                    steps {
+                        sh '''
+                            PYTHONPATH=.
+                            ./venv/bin/coverage run --branch --source=app \
+                                --omit=app/__init__.py,app/api.py \
+                                -m pytest test/unit --junitxml=result_unit.xml
+                            ./venv/bin/coverage xml -o coverage.xml
+                        '''
+                        junit 'result_unit.xml'
+                    }
+                }
+                stage('Rest') {
+                    steps {
+                        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                            sh '''
+                                fuser -k 5000/tcp || true
+                                ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
+                                sleep 5
+                                PYTHONPATH=.
+                                ./venv/bin/pytest test/rest --junitxml=result_rest.xml
+                                fuser -k 5000/tcp || true
+                            '''
+                            junit 'result_rest.xml'
+                        }
+                    }
                 }
             }
         }
@@ -74,7 +70,7 @@ pipeline {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '''
-                        ./venv/bin/flake8 app --exit-zero --format=pylint > flake8.out
+                       ./venv/bin/flake8 app --exit-zero --format=pylint > flake8.out
                     '''
                     recordIssues(
                         tools: [flake8(pattern: 'flake8.out')],
@@ -111,7 +107,7 @@ pipeline {
                     ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
                     sleep 5
                     $JMETER_BIN -n -t $JMX_FILE -l flask.jtl -f
-                    kill $(lsof -t -i:5000) || true
+                    fuser -k 5000/tcp || true
                 '''
                 perfReport sourceDataFiles: 'flask.jtl'
             }
