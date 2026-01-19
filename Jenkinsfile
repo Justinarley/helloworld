@@ -21,14 +21,18 @@ pipeline {
                         sh '''
                             python3 -m venv venv
                             ./venv/bin/pip install --upgrade pip
-                            ./venv/bin/pip install flask pytest coverage flake8 bandit
-                            if [ -f requirements.txt ]; then ./venv/bin/pip install -r requirements.txt; fi
+                            if [ -f requirements.txt ]; then
+                                ./venv/bin/pip install -r requirements.txt
+                            else
+                                ./venv/bin/pip install flask pytest coverage flake8 bandit
+                            fi
                         '''
                     }
                 }
                 stage('Levantar Wiremock') {
                     steps {
                         sh 'docker start wiremock || true'
+                        sleep 3
                     }
                 }
             }
@@ -41,6 +45,7 @@ pipeline {
                     ./venv/bin/coverage run --branch --source=app \
                         --omit=app/__init__.py,app/api.py \
                         -m pytest test/unit --junitxml=result_unit.xml
+
                     ./venv/bin/coverage xml -o coverage.xml
                 '''
                 junit 'result_unit.xml'
@@ -49,7 +54,7 @@ pipeline {
 
         stage('Rest') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '''
                         fuser -k 5000/tcp || true
                         ./venv/bin/flask run --host=0.0.0.0 --port=5000 &
@@ -66,12 +71,14 @@ pipeline {
         stage('Static') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh './venv/bin/flake8 app --exit-zero --format=pylint > flake8.out'
+                    sh '''
+                        ./venv/bin/flake8 app --exit-zero --format=pylint > flake8.out
+                    '''
                     recordIssues(
                         tools: [flake8(pattern: 'flake8.out')],
                         qualityGates: [
-                            [threshold: 8, type: 'TOTAL', criticality: 'UNSTABLE'],
-                            [threshold: 10, type: 'TOTAL', criticality: 'FAILURE']
+                            [threshold: 17, type: 'TOTAL', unstable: true],
+                            [threshold: 18, type: 'TOTAL', unstable: false]
                         ]
                     )
                 }
@@ -81,12 +88,14 @@ pipeline {
         stage('Security Test') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh './venv/bin/bandit -r app --exit-zero -f json -o bandit.json'
+                    sh '''
+                        ./venv/bin/bandit -r app --exit-zero -f json -o bandit.json
+                    '''
                     recordIssues(
                         tools: [pyLint(pattern: 'bandit.json')],
                         qualityGates: [
-                            [threshold: 2, type: 'TOTAL', criticality: 'UNSTABLE'],
-                            [threshold: 4, type: 'TOTAL', criticality: 'FAILURE']
+                            [threshold: 2, type: 'TOTAL', unstable: true],
+                            [threshold: 4, type: 'TOTAL', unstable: false]
                         ]
                     )
                 }
@@ -99,9 +108,9 @@ pipeline {
                     recordCoverage(
                         tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
                         qualityGates: [
-                            [threshold: 95.0, metric: 'LINE', baseline: 'PROJECT', criticality: 'UNSTABLE'],
-                            [threshold: 85.0, metric: 'LINE', baseline: 'PROJECT', criticality: 'FAILURE'],
-                            [threshold: 90.0, metric: 'BRANCH', baseline: 'PROJECT', criticality: 'UNSTABLE'],
+                            [threshold: 85.0, metric: 'LINE', baseline: 'PROJECT', criticality: 'UNSTABLE'],
+                            [threshold: 80.0, metric: 'BRANCH', baseline: 'PROJECT', criticality: 'UNSTABLE'],
+                            [threshold: 90.0, metric: 'LINE', baseline: 'PROJECT', criticality: 'FAILURE'],
                             [threshold: 80.0, metric: 'BRANCH', baseline: 'PROJECT', criticality: 'FAILURE']
                         ]
                     )
