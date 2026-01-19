@@ -12,6 +12,7 @@ pipeline {
         stage('Get Code & Stash') {
             agent { label 'agente-build' }
             steps {
+                sh 'whoami; hostname; echo "WORKSPACE=$WORKSPACE"'
                 checkout scm
                 stash name: 'codigo-fuente', includes: '**/*', excludes: 'venv/**, .pytest_cache/**'
             }
@@ -20,6 +21,7 @@ pipeline {
         stage('Dependencies') {
             agent { label 'agente-build' }
             steps {
+                sh 'whoami; hostname; echo "WORKSPACE=$WORKSPACE"'
                 unstash 'codigo-fuente'
                 sh '''
                     python3 -m venv venv
@@ -36,6 +38,7 @@ pipeline {
                 stage('Unit Tests') {
                     agent { label 'agente-test' }
                     steps {
+                        sh 'whoami; hostname; echo "WORKSPACE=$WORKSPACE"'
                         unstash 'codigo-fuente'
                         unstash 'venv'
                         sh '''
@@ -53,6 +56,7 @@ pipeline {
                 stage('Rest & Performance') {
                     agent { label 'agente-test' }
                     steps {
+                        sh 'whoami; hostname; echo "WORKSPACE=$WORKSPACE"'
                         unstash 'codigo-fuente'
                         unstash 'venv'
                         sh 'docker start wiremock || true'
@@ -75,6 +79,7 @@ pipeline {
                 stage('Static & Security') {
                     agent { label 'agente-test' }
                     steps {
+                        sh 'whoami; hostname; echo "WORKSPACE=$WORKSPACE"'
                         unstash 'codigo-fuente'
                         unstash 'venv'
                         catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
@@ -105,6 +110,7 @@ pipeline {
         stage('Final Analysis') {
             agent { label 'agente-build' }
             steps {
+                sh 'whoami; hostname; echo "WORKSPACE=$WORKSPACE"'
                 unstash 'reporte-cobertura'
                 recordCoverage(
                     tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
