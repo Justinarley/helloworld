@@ -28,7 +28,7 @@ pipeline {
                         sh '''
                             python3 -m venv venv
                             ./venv/bin/pip install flask pytest coverage
-                            PYTHONPATH=. ./venv/bin/coverage run -m pytest test/unit --junitxml=result_unit.xml
+                            PYTHONPATH=. ./venv/bin/coverage run --branch --source=app --omit=app/__init__.py,app//api.py -m pytest test/unit --junitxml=result_unit.xml
                             ./venv/bin/coverage xml -o coverage.xml
                         '''
                         junit 'result_unit.xml'
