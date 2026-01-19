@@ -87,11 +87,10 @@ pipeline {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '''
-                        ./venv/bin/bandit -r app --exit-zero -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
-                        cat bandit.out
+                        ./venv/bin/bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
                     '''
                     recordIssues(
-                        tools: [pyLint(pattern: 'bandit.out', id: 'bandit', name: 'Security Test')],
+                        tools: [pyLint(pattern: 'bandit.out')],
                         qualityGates: [
                             [criticality: 'NOTE',    integerThreshold: 2, threshold: 2.0, type: 'TOTAL'],
                             [criticality: 'FAILURE', integerThreshold: 4, threshold: 4.0, type: 'TOTAL']
